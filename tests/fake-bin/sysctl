@@ -1,0 +1,25 @@
+#!/bin/sh
+# Fake busybox sysctl for tests/run.sh. Supports only the two forms the rule script uses:
+# `sysctl -n <key>` and `sysctl -w <key>=<value>`. Unset keys read as 0, like the kernel default.
+set -eu
+
+STATE="${FAKE_STATE:?FAKE_STATE not set}"
+
+case "${1:-}" in
+    -n)
+        value=$(grep "^SYSCTL $2 " "$STATE" | cut -d' ' -f3 || :)
+        echo "${value:-0}"
+        ;;
+    -w)
+        key="${2%%=*}"
+        value="${2#*=}"
+        grep -v "^SYSCTL $key " "$STATE" > "$STATE.tmp" || :
+        mv "$STATE.tmp" "$STATE"
+        echo "SYSCTL $key $value" >> "$STATE"
+        echo "$key = $value"
+        ;;
+    *)
+        echo "sysctl: unhandled $*" >&2
+        exit 2
+        ;;
+esac

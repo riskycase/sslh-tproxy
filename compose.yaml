@@ -2,8 +2,10 @@ services:
   sslh-tproxy:
     build: .
     network_mode: host          # rules must land in the host netns, where the backends reply from
-    cap_add:
-      - NET_ADMIN
+    # Needed to write route_localnet: /proc/sys is read-only otherwise, and compose's
+    # sysctls: key is rejected under host networking. Accepted trade-off to keep every
+    # piece of host setup inside this stack; this container can act as root on the host.
+    privileged: true
     restart: unless-stopped
     environment:
       SSLH_IFACE: "${SSLH_IFACE:-eth0}"

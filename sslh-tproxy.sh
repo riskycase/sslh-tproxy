@@ -11,6 +11,10 @@ TABLE="${SSLH_TABLE:-100}"
 IPV6="${SSLH_IPV6:-1}"
 INTERVAL="${SSLH_RECONCILE_INTERVAL:-60}"
 
+# Backends reply from 127.0.0.1; the kernel drops 127/8 traffic routed off loopback
+# unless route_localnet is set.
+SYSCTLS="net.ipv4.conf.all.route_localnet net.ipv4.conf.default.route_localnet"
+
 families() {
     if [ "$IPV6" = "1" ]; then
         echo "iptables ip6tables"
@@ -20,7 +24,7 @@ families() {
 }
 
 require_tools() {
-    for tool in ip $(families); do
+    for tool in ip sysctl $(families); do
         command -v "$tool" >/dev/null || { echo "$tool missing from image" >&2; exit 1; }
     done
 }
@@ -34,6 +38,9 @@ require_iface() {
 
 apply() {
     require_iface
+    for key in $SYSCTLS; do
+        sysctl -w "$key=1" >/dev/null
+    done
     for ipt in $(families); do
         "$ipt" -t mangle -N SSLH 2>/dev/null || "$ipt" -t mangle -F SSLH
         "$ipt" -t mangle -A SSLH -j MARK --set-mark "$MARK"
@@ -61,6 +68,9 @@ apply() {
 
 check() {
     require_iface
+    for key in $SYSCTLS; do
+        [ "$(sysctl -n "$key")" = "1" ] || return 1
+    done
     for ipt in $(families); do
         "$ipt" -t mangle -C SSLH -j MARK --set-mark "$MARK" 2>/dev/null || return 1
         for port in $PORTS; do
@@ -76,6 +86,8 @@ check() {
     fi
 }
 
+# route_localnet is left as it is: its value before apply is unknown, and other
+# services on the host may depend on it.
 flush() {
     for ipt in $(families); do
         for port in $PORTS; do

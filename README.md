@@ -6,7 +6,8 @@ instead of a systemd unit.
 sslh's transparent mode makes backend connections carry the original client IP. The
 backends' replies therefore leave with a source address the kernel would route out the
 wire, so they have to be marked and sent back to sslh's transparent sockets instead. That
-marking is what this stack does.
+marking is what this stack does, along with setting `route_localnet` — the backends
+reply from 127.0.0.1, and the kernel drops 127/8 traffic routed off loopback without it.
 
 Backends are host services (sshd, httpd), so everything runs in the host network
 namespace. There is no MASQUERADE rule here — that belongs to the setup where sslh and
@@ -19,7 +20,6 @@ its backends live in separate namespaces, which this is not.
 | `sslh-tproxy.sh` | the rule script: `apply`, `check`, `flush`, `run` |
 | `Dockerfile` | alpine + iptables, ip6tables, iproute2 |
 | `compose.yaml` | the `sslh-tproxy` sidecar, `sslh`, and `nginx-ui` |
-| `host/99-sslh-tproxy.conf` | sysctls, installed on the host — not by compose |
 | `tests/run.sh` | runs the script against fake netfilter tools |
 
 ## Tests
@@ -28,31 +28,34 @@ its backends live in separate namespaces, which this is not.
 ./tests/run.sh
 ```
 
-No root, no netfilter, no container. `tests/fake-bin` stands in for iptables, ip6tables
-and ip, recording what the script asks for so repeated applies can be compared. Run this
+No root, no netfilter, no container. `tests/fake-bin` stands in for iptables, ip6tables,
+ip and sysctl, recording what the script asks for so repeated applies can be compared. Run this
 before pushing; it is what keeps `apply` idempotent.
 
 ## Per-host setup
 
 1. `ip -o link` — find the real interface name.
-2. Install the sysctls (they are host kernel config, not container state; `/proc/sys` is
-   read-only inside an unprivileged container and Docker rejects `net.*` in compose's
-   `sysctls:` under host networking):
-
-   ```
-   sudo install -m 644 host/99-sslh-tproxy.conf /etc/sysctl.d/99-sslh-tproxy.conf
-   sudo sysctl --system
-   ```
-
-3. Create the Komodo stack:
+2. Create the Komodo stack:
    - source: this repo + branch, webhook enabled for redeploy on push
    - `run_directory`: the directory holding `compose.yaml` — also the build context
    - `extra_args`: `--build`, so a push that touches the Dockerfile or script rebuilds.
      Bare `docker compose up` only builds when the image is missing.
-   - environment: `SSLH_IFACE`, `SSLH_PORTS`
+   - environment: `SSLH_IFACE`, `SSLH_PORTS`, `TZ`
 
 `sslh` and `sslh-tproxy` must be in the same stack — `depends_on` does not cross compose
 projects.
+
+## Why `sslh-tproxy` is privileged
+
+Writing `route_localnet` needs a writable `/proc/sys`. Docker mounts it read-only, and
+compose's `sysctls:` key is rejected under `network_mode: host`. The alternatives were a
+host-side `/etc/sysctl.d` file (one manual step per host) or `privileged: true`.
+
+This stack takes `privileged: true`, so that nothing about a host lives outside the
+repo and a reboot needs no help. The cost is real and accepted: this container can act as
+root on the host. `security_opt: systempaths=unconfined` looks narrower but isn't — with a
+writable `/proc/sys`, root can rewrite host-global settings such as `kernel.core_pattern`,
+which is a known container escape. Keep the image minimal and its base pinned.
 
 ## Knobs
 
@@ -71,6 +74,7 @@ projects.
 2. `sudo iptables -t mangle -S SSLH` and `-S OUTPUT`; repeat with `ip6tables`. One OUTPUT
    jump per port, no duplicates.
 3. `ip rule show | grep fwmark` and `ip route show table 100`; repeat with `ip -6`.
+   `sysctl net.ipv4.conf.all.route_localnet net.ipv4.conf.default.route_localnet` — both `= 1`.
 4. Redeploy three times, re-check 2 and 3. Counts must be identical.
 5. `sudo iptables -t mangle -F OUTPUT`, wait 60s, re-check 2. The reconcile loop restores
    them.
