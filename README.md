@@ -18,7 +18,7 @@ its backends live in separate namespaces, which this is not.
 |---|---|
 | `sslh-tproxy.sh` | the rule script: `apply`, `check`, `flush`, `run` |
 | `Dockerfile` | alpine + iptables, ip6tables, iproute2 |
-| `docker-compose.yml` | the `sslh-tproxy` sidecar and the `sslh` service |
+| `compose.yaml` | the `sslh-tproxy` sidecar, `sslh`, and `nginx-ui` |
 | `host/99-sslh-tproxy.conf` | sysctls, installed on the host — not by compose |
 | `tests/run.sh` | runs the script against fake netfilter tools |
 
@@ -46,7 +46,7 @@ before pushing; it is what keeps `apply` idempotent.
 
 3. Create the Komodo stack:
    - source: this repo + branch, webhook enabled for redeploy on push
-   - `run_directory`: the directory holding `docker-compose.yml` — also the build context
+   - `run_directory`: the directory holding `compose.yaml` — also the build context
    - `extra_args`: `--build`, so a push that touches the Dockerfile or script rebuilds.
      Bare `docker compose up` only builds when the image is missing.
    - environment: `SSLH_IFACE`, `SSLH_PORTS`
