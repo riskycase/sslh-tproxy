@@ -25,7 +25,15 @@ require_tools() {
     done
 }
 
+# iptables accepts -o for an interface that doesn't exist and the rule never matches,
+# so a wrong SSLH_IFACE would otherwise "apply" cleanly and do nothing.
+require_iface() {
+    ip link show dev "$IFACE" >/dev/null 2>&1 \
+        || { echo "interface $IFACE does not exist; set SSLH_IFACE" >&2; exit 1; }
+}
+
 apply() {
+    require_iface
     for ipt in $(families); do
         "$ipt" -t mangle -N SSLH 2>/dev/null || "$ipt" -t mangle -F SSLH
         "$ipt" -t mangle -A SSLH -j MARK --set-mark "$MARK"
@@ -52,6 +60,7 @@ apply() {
 }
 
 check() {
+    require_iface
     for ipt in $(families); do
         "$ipt" -t mangle -C SSLH -j MARK --set-mark "$MARK" 2>/dev/null || return 1
         for port in $PORTS; do

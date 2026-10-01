@@ -22,6 +22,14 @@ drop_prefix() {
 }
 
 case "$OBJ $ACTION" in
+    "link show")
+        [ "${1:-}" = "dev" ] && shift
+        for iface in ${FAKE_IFACES:-lo eth0}; do
+            [ "$iface" = "${1:-}" ] && exit 0
+        done
+        echo "Device \"${1:-}\" does not exist." >&2
+        exit 1
+        ;;
     "rule show")
         grep "^IPRULE $FAM " "$STATE" | sed "s/^IPRULE $FAM /32765: from all /" || :
         ;;

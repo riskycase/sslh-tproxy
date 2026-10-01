@@ -51,5 +51,11 @@ sh "$SCRIPT" flush >/dev/null
 [ ! -s "$FAKE_STATE" ] || fail "flush left rules behind: $(snapshot)"
 echo "ok   flush removes everything"
 
+if SSLH_IFACE=eno9 sh "$SCRIPT" apply 2>/dev/null; then
+    fail "apply succeeded against an interface that does not exist"
+fi
+[ ! -s "$FAKE_STATE" ] || fail "apply wrote rules for a missing interface: $(snapshot)"
+echo "ok   apply refuses a missing interface and writes nothing"
+
 echo
-echo "PASS 7/7"
+echo "PASS 8/8"
