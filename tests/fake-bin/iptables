@@ -1,0 +1,52 @@
+#!/bin/sh
+# Fake iptables/ip6tables for tests/run.sh. Records rules in $FAKE_STATE so the rule
+# script's idempotency guards can be exercised without root or a real netfilter stack.
+set -eu
+
+FAM=$(basename "$0")
+STATE="${FAKE_STATE:?FAKE_STATE not set}"
+
+[ "${1:-}" = "-t" ] || { echo "$FAM: expected -t <table>" >&2; exit 2; }
+TABLE="$2"
+shift 2
+
+ACTION="$1"
+CHAIN="$2"
+shift 2
+
+KEY="$FAM $TABLE $CHAIN"
+
+drop_exact() {
+    grep -vxF "$1" "$STATE" > "$STATE.tmp" || :
+    mv "$STATE.tmp" "$STATE"
+}
+
+case "$ACTION" in
+    -N)
+        if grep -qxF "CHAIN $KEY" "$STATE"; then
+            echo "$FAM: Chain already exists" >&2
+            exit 1
+        fi
+        echo "CHAIN $KEY" >> "$STATE"
+        ;;
+    -X)
+        drop_exact "CHAIN $KEY"
+        ;;
+    -F)
+        grep -v "^RULE $KEY " "$STATE" > "$STATE.tmp" || :
+        mv "$STATE.tmp" "$STATE"
+        ;;
+    -A)
+        echo "RULE $KEY $*" >> "$STATE"
+        ;;
+    -C)
+        grep -qxF "RULE $KEY $*" "$STATE"
+        ;;
+    -D)
+        drop_exact "RULE $KEY $*"
+        ;;
+    *)
+        echo "$FAM: unhandled action $ACTION" >&2
+        exit 2
+        ;;
+esac

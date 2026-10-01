@@ -1,0 +1,57 @@
+#!/bin/sh
+# Fake iproute2 for tests/run.sh. Renders 0.0.0.0/0 and ::/0 as "default" on show the way
+# real iproute2 does, because the rule script's check mode greps for "local default".
+set -eu
+
+STATE="${FAKE_STATE:?FAKE_STATE not set}"
+
+FAM=4
+if [ "${1:-}" = "-6" ]; then
+    FAM=6
+    shift
+fi
+
+OBJ="${1:?ip: missing object}"
+shift
+ACTION="${1:?ip: missing action}"
+shift
+
+drop_prefix() {
+    grep -v "^$1" "$STATE" > "$STATE.tmp" || :
+    mv "$STATE.tmp" "$STATE"
+}
+
+case "$OBJ $ACTION" in
+    "rule show")
+        grep "^IPRULE $FAM " "$STATE" | sed "s/^IPRULE $FAM /32765: from all /" || :
+        ;;
+    "rule add")
+        echo "IPRULE $FAM $*" >> "$STATE"
+        ;;
+    "rule del")
+        grep -vxF "IPRULE $FAM $*" "$STATE" > "$STATE.tmp" || :
+        mv "$STATE.tmp" "$STATE"
+        ;;
+    "route add")
+        if grep -qxF "IPROUTE $FAM $*" "$STATE"; then
+            echo "RTNETLINK answers: File exists" >&2
+            exit 2
+        fi
+        echo "IPROUTE $FAM $*" >> "$STATE"
+        ;;
+    "route replace")
+        drop_prefix "IPROUTE $FAM "
+        echo "IPROUTE $FAM $*" >> "$STATE"
+        ;;
+    "route show")
+        grep "^IPROUTE $FAM " "$STATE" \
+            | sed -e "s/^IPROUTE $FAM //" -e 's|0\.0\.0\.0/0|default|' -e 's|::/0|default|' || :
+        ;;
+    "route flush")
+        drop_prefix "IPROUTE $FAM "
+        ;;
+    *)
+        echo "ip: unhandled $OBJ $ACTION" >&2
+        exit 2
+        ;;
+esac
