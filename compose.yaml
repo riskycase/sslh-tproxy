@@ -8,7 +8,7 @@ services:
     privileged: true
     restart: unless-stopped
     environment:
-      SSLH_IFACE: "${SSLH_IFACE:-eth0}"
+      SSLH_IFACE: "${SSLH_IFACE:-}"   # empty: detected from the default route
       SSLH_PORTS: "${SSLH_PORTS:-22 8443}"
     healthcheck:
       test: ["CMD", "sslh-tproxy", "check"]

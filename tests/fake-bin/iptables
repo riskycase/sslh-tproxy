@@ -45,6 +45,9 @@ case "$ACTION" in
     -D)
         drop_exact "RULE $KEY $*"
         ;;
+    -S)
+        grep "^RULE $KEY " "$STATE" | sed "s/^RULE $KEY /-A $CHAIN /" || :
+        ;;
     *)
         echo "$FAM: unhandled action $ACTION" >&2
         exit 2

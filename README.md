@@ -34,13 +34,14 @@ before pushing; it is what keeps `apply` idempotent.
 
 ## Per-host setup
 
-1. `ip -o link` — find the real interface name.
+1. `ip route show default` — expect exactly one line. Its `dev` is the interface the
+   sidecar will use; set `SSLH_IFACE` only if there are several, or to override.
 2. Create the Komodo stack:
    - source: this repo + branch, webhook enabled for redeploy on push
    - `run_directory`: the directory holding `compose.yaml` — also the build context
    - `extra_args`: `--build`, so a push that touches the Dockerfile or script rebuilds.
      Bare `docker compose up` only builds when the image is missing.
-   - environment: `SSLH_IFACE`, `SSLH_PORTS`, `TZ`
+   - environment: `TZ`; `SSLH_IFACE` and `SSLH_PORTS` only to override defaults
 
 `sslh` and `sslh-tproxy` must be in the same stack — `depends_on` does not cross compose
 projects.
@@ -61,7 +62,7 @@ which is a known container escape. Keep the image minimal and its base pinned.
 
 | Variable | Default |
 |---|---|
-| `SSLH_IFACE` | `eth0` |
+| `SSLH_IFACE` | interface of the IPv4 default route |
 | `SSLH_PORTS` | `22 8443` |
 | `SSLH_MARK` | `0x1` |
 | `SSLH_TABLE` | `100` |
@@ -84,14 +85,15 @@ which is a known container escape. Keep the image minimal and its base pinned.
 7. `sudo reboot`, then re-run 1 through 3 and 6.
 8. Only after all of the above: disable the old systemd unit, so the two cannot fight.
 
-## Read this before deploying to a new host
+## Direct connections keep working
 
-While these rules are loaded, a connection direct to `eth0:22` that did not arrive via
-sslh does not work. That is inherent to sslh's transparent design, not something this
-stack introduces. The consequence: **if the sslh container is down and the rules are still
-loaded, port 22 on that interface is unreachable.** Have a second way in — console,
-Tailscale/WireGuard, or an sshd on a port that is not in `SSLH_PORTS` — before you deploy
-to a host you cannot walk over to.
+The OUTPUT jumps only match replies sourced from loopback (`-s 127.0.0.1`, `-s ::1`),
+which is what sslh's backends reply from. A direct connection to port 22 on the public
+interface replies from the public address, is never marked, and works as normal — so
+direct ssh on 22 stays available as a way in even when the sslh container is down.
+
+Older versions of this script marked every reply on these ports and broke direct ssh;
+`apply` removes those unscoped jumps on startup, so upgrading needs no manual cleanup.
 
 Rules stay resident after the stack comes down; no teardown is wired into the container
 lifecycle, because a stop-time trap only fires on a graceful stop and is not a guarantee
