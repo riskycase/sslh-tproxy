@@ -34,14 +34,12 @@ before pushing; it is what keeps `apply` idempotent.
 
 ## Per-host setup
 
-1. `ip route show default` — expect exactly one line. Its `dev` is the interface the
-   sidecar will use; set `SSLH_IFACE` only if there are several, or to override.
-2. Create the Komodo stack:
+1. Create the Komodo stack:
    - source: this repo + branch, webhook enabled for redeploy on push
    - `run_directory`: the directory holding `compose.yaml` — also the build context
    - `extra_args`: `--build`, so a push that touches the Dockerfile or script rebuilds.
      Bare `docker compose up` only builds when the image is missing.
-   - environment: `TZ`; `SSLH_IFACE` and `SSLH_PORTS` only to override defaults
+   - environment: `TZ`; `SSLH_PORTS` only to override the default
 
 `sslh` and `sslh-tproxy` must be in the same stack — `depends_on` does not cross compose
 projects.
@@ -62,7 +60,6 @@ which is a known container escape. Keep the image minimal and its base pinned.
 
 | Variable | Default |
 |---|---|
-| `SSLH_IFACE` | interface of the IPv4 default route |
 | `SSLH_PORTS` | `22 8443` |
 | `SSLH_MARK` | `0x1` |
 | `SSLH_TABLE` | `100` |

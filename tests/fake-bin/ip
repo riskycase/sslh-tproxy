@@ -22,14 +22,6 @@ drop_prefix() {
 }
 
 case "$OBJ $ACTION" in
-    "link show")
-        [ "${1:-}" = "dev" ] && shift
-        for iface in ${FAKE_IFACES:-lo eth0}; do
-            [ "$iface" = "${1:-}" ] && exit 0
-        done
-        echo "Device \"${1:-}\" does not exist." >&2
-        exit 1
-        ;;
     "rule show")
         grep "^IPRULE $FAM " "$STATE" | sed "s/^IPRULE $FAM /32765: from all /" || :
         ;;
@@ -52,11 +44,6 @@ case "$OBJ $ACTION" in
         echo "IPROUTE $FAM $*" >> "$STATE"
         ;;
     "route show")
-        # The host's main-table default routes, set per test: one route per line.
-        if [ "${1:-}" = "default" ]; then
-            [ -z "${FAKE_DEFAULT_ROUTES:-}" ] || printf '%s\n' "$FAKE_DEFAULT_ROUTES"
-            exit 0
-        fi
         grep "^IPROUTE $FAM " "$STATE" \
             | sed -e "s/^IPROUTE $FAM //" -e 's|0\.0\.0\.0/0|default|' -e 's|::/0|default|' || :
         ;;

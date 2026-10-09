@@ -10,7 +10,6 @@ PATH="$PWD/fake-bin:$PATH"
 export PATH
 FAKE_STATE=$(mktemp)
 export FAKE_STATE
-export SSLH_IFACE=eth0
 export SSLH_PORTS="22 8443"
 
 trap 'rm -f "$FAKE_STATE" "$FAKE_STATE.tmp"' EXIT
@@ -35,6 +34,10 @@ unscoped=$(grep '^RULE ip6\{0,1\}tables mangle OUTPUT ' "$FAKE_STATE" | grep -v 
 [ -z "$unscoped" ] || fail "OUTPUT jumps not limited to loopback replies: $unscoped"
 echo "ok   apply marks only replies sourced from loopback"
 
+pinned=$(grep '^RULE ip6\{0,1\}tables mangle OUTPUT ' "$FAKE_STATE" | grep -v -e '! -o lo ' || :)
+[ -z "$pinned" ] || fail "OUTPUT jumps limited to one interface, replies to containers go unmarked: $pinned"
+echo "ok   apply marks replies on every interface but loopback"
+
 sh "$SCRIPT" check || fail "check failed immediately after apply"
 echo "ok   check passes after apply"
 
@@ -43,7 +46,7 @@ sh "$SCRIPT" apply >/dev/null
 [ "$first" = "$(snapshot)" ] || fail "state drifted across repeated applies"
 echo "ok   apply is idempotent across 3 runs"
 
-iptables -t mangle -D OUTPUT -p tcp -s 127.0.0.1 -o eth0 --sport 22 -j SSLH
+iptables -t mangle -D OUTPUT -p tcp -s 127.0.0.1 ! -o lo --sport 22 -j SSLH
 if sh "$SCRIPT" check; then fail "check passed with an OUTPUT jump missing"; fi
 echo "ok   check detects a removed OUTPUT jump"
 
@@ -71,33 +74,5 @@ sh "$SCRIPT" flush >/dev/null
 [ -z "$(netfilter_state)" ] || fail "flush left rules behind: $(netfilter_state)"
 echo "ok   flush removes every rule and route"
 
-: > "$FAKE_STATE"
-if SSLH_IFACE=eno9 sh "$SCRIPT" apply 2>/dev/null; then
-    fail "apply succeeded against an interface that does not exist"
-fi
-[ ! -s "$FAKE_STATE" ] || fail "apply wrote state for a missing interface: $(snapshot)"
-echo "ok   apply refuses a missing interface and writes nothing"
-
-: > "$FAKE_STATE"
-SSLH_IFACE= FAKE_DEFAULT_ROUTES="default via 10.0.0.1 dev eth0 proto static" sh "$SCRIPT" apply >/dev/null \
-    || fail "apply failed to detect the interface from the default route"
-[ "$first" = "$(snapshot)" ] || fail "detected interface produced different rules than SSLH_IFACE=eth0"
-echo "ok   apply detects the interface from the default route"
-
-: > "$FAKE_STATE"
-if SSLH_IFACE= sh "$SCRIPT" apply 2>/dev/null; then
-    fail "apply succeeded with no SSLH_IFACE and no default route"
-fi
-[ ! -s "$FAKE_STATE" ] || fail "apply wrote state with no interface to use: $(snapshot)"
-echo "ok   apply refuses to guess when there is no default route"
-
-two_routes="default via 10.0.0.1 dev eth0 proto static
-default via 192.0.2.1 dev eno2 proto static"
-if SSLH_IFACE= FAKE_IFACES="lo eth0 eno2" FAKE_DEFAULT_ROUTES="$two_routes" sh "$SCRIPT" apply 2>/dev/null; then
-    fail "apply picked one of two default-route interfaces"
-fi
-[ ! -s "$FAKE_STATE" ] || fail "apply wrote state despite ambiguous default routes: $(snapshot)"
-echo "ok   apply refuses to guess between two default-route interfaces"
-
 echo
-echo "PASS 15/15"
+echo "PASS 12/12"
