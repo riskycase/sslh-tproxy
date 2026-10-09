@@ -1,7 +1,8 @@
 #!/bin/sh
 # Marks reply traffic from sslh's backends so it is delivered back to sslh's transparent
-# sockets instead of being sent out the wire. Every mode is safe to re-run: Docker
-# restarts this container across reboots, and duplicate rules would stack.
+# sockets instead of being sent out the wire, and keeps Docker from masquerading sslh's
+# connections to those backends. Every mode is safe to re-run: Docker restarts this
+# container across reboots, and duplicate rules would stack.
 set -eu
 
 PORTS="${SSLH_PORTS:-22 8443}"
@@ -41,15 +42,27 @@ loopback() {
     fi
 }
 
-# Removes every OUTPUT jump into SSLH, whatever it matches, so jumps written by an older
-# version of this script or for a different port list don't linger.
+# Removes every jump into SSLH from a built-in chain, whatever it matches, so jumps written
+# by an older version of this script or for a different port list don't linger.
 drop_jumps() {
-    jumps=$("$1" -t mangle -S OUTPUT 2>/dev/null | grep -- '-j SSLH$' | sed 's/^-A //' || :)
+    jumps=$("$1" -t "$2" -S "$3" 2>/dev/null | grep -- '-j SSLH$' | sed 's/^-A //' || :)
     [ -n "$jumps" ] || return 0
     printf '%s\n' "$jumps" | while read -r rule; do
         # shellcheck disable=SC2086
-        "$1" -t mangle -D $rule
+        "$1" -t "$2" -D $rule
     done
+}
+
+# Docker masquerades traffic from a bridge network that leaves through any other
+# interface, lo included. sslh's transparent connection to a backend carries the client's
+# address, so for a client in a container on this host it gets rewritten to a host
+# address; the backend's reply is only un-NATed back to the container after the mark rule
+# has seen it bound for lo, and then leaves through the bridge from 127.0.0.1 and is
+# dropped. ACCEPT in nat leaves the connection untranslated. Docker appends its
+# masquerade rules, so the jump has to stay first in POSTROUTING.
+nat_jump_first() {
+    [ "$("$1" -t nat -S POSTROUTING 2>/dev/null | grep '^-A POSTROUTING' | head -n 1)" \
+        = "-A POSTROUTING -o lo -j SSLH" ]
 }
 
 apply() {
@@ -60,10 +73,17 @@ apply() {
         "$ipt" -t mangle -N SSLH 2>/dev/null || "$ipt" -t mangle -F SSLH
         "$ipt" -t mangle -A SSLH -j MARK --set-mark "$MARK"
         "$ipt" -t mangle -A SSLH -j ACCEPT
-        drop_jumps "$ipt"
+        drop_jumps "$ipt" mangle OUTPUT
         for port in $PORTS; do
             "$ipt" -t mangle -A OUTPUT -p tcp -s "$(loopback "$ipt")" ! -o lo --sport "$port" -j SSLH
         done
+
+        "$ipt" -t nat -N SSLH 2>/dev/null || "$ipt" -t nat -F SSLH
+        for port in $PORTS; do
+            "$ipt" -t nat -A SSLH -p tcp --dport "$port" -j ACCEPT
+        done
+        drop_jumps "$ipt" nat POSTROUTING
+        "$ipt" -t nat -I POSTROUTING 1 -o lo -j SSLH
     done
 
     if ! ip rule show | grep -q "fwmark $MARK lookup $TABLE"; then
@@ -90,7 +110,9 @@ check() {
         for port in $PORTS; do
             "$ipt" -t mangle -C OUTPUT -p tcp -s "$(loopback "$ipt")" ! -o lo --sport "$port" -j SSLH \
                 2>/dev/null || return 1
+            "$ipt" -t nat -C SSLH -p tcp --dport "$port" -j ACCEPT 2>/dev/null || return 1
         done
+        nat_jump_first "$ipt" || return 1
     done
     ip rule show | grep -q "fwmark $MARK lookup $TABLE" || return 1
     ip route show table "$TABLE" | grep -q 'local default' || return 1
@@ -104,9 +126,12 @@ check() {
 # services on the host may depend on it.
 flush() {
     for ipt in $(families); do
-        drop_jumps "$ipt"
+        drop_jumps "$ipt" mangle OUTPUT
         "$ipt" -t mangle -F SSLH 2>/dev/null || true
         "$ipt" -t mangle -X SSLH 2>/dev/null || true
+        drop_jumps "$ipt" nat POSTROUTING
+        "$ipt" -t nat -F SSLH 2>/dev/null || true
+        "$ipt" -t nat -X SSLH 2>/dev/null || true
     done
     ip rule del fwmark "$MARK" lookup "$TABLE" 2>/dev/null || true
     ip route flush table "$TABLE" 2>/dev/null || true

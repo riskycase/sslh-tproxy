@@ -38,6 +38,13 @@ pinned=$(grep '^RULE ip6\{0,1\}tables mangle OUTPUT ' "$FAKE_STATE" | grep -v -e
 [ -z "$pinned" ] || fail "OUTPUT jumps limited to one interface, replies to containers go unmarked: $pinned"
 echo "ok   apply marks replies on every interface but loopback"
 
+[ "$(iptables -t nat -S POSTROUTING | head -n 1)" = "-A POSTROUTING -o lo -j SSLH" ] \
+    || fail "nat exemption is not the first POSTROUTING rule: $(iptables -t nat -S POSTROUTING)"
+for port in $SSLH_PORTS; do
+    iptables -t nat -C SSLH -p tcp --dport "$port" -j ACCEPT || fail "nat exemption missing port $port"
+done
+echo "ok   apply exempts backend connections over loopback from masquerade"
+
 sh "$SCRIPT" check || fail "check failed immediately after apply"
 echo "ok   check passes after apply"
 
@@ -54,6 +61,20 @@ sh "$SCRIPT" apply >/dev/null
 iptables -t mangle -F SSLH
 if sh "$SCRIPT" check; then fail "check passed with the SSLH chain flushed"; fi
 echo "ok   check detects a flushed SSLH chain"
+
+sh "$SCRIPT" apply >/dev/null
+iptables -t nat -D POSTROUTING -o lo -j SSLH
+if sh "$SCRIPT" check; then fail "check passed with the nat exemption jump missing"; fi
+echo "ok   check detects a removed nat exemption"
+
+sh "$SCRIPT" apply >/dev/null
+iptables -t nat -I POSTROUTING 1 -s 172.19.0.0/16 ! -o br-test -j MASQUERADE
+if sh "$SCRIPT" check; then fail "check passed with a masquerade rule above the nat exemption"; fi
+sh "$SCRIPT" apply >/dev/null
+[ "$(iptables -t nat -S POSTROUTING | head -n 1)" = "-A POSTROUTING -o lo -j SSLH" ] \
+    || fail "apply did not move the nat exemption back above the masquerade rule"
+iptables -t nat -D POSTROUTING -s 172.19.0.0/16 ! -o br-test -j MASQUERADE
+echo "ok   check and apply keep the nat exemption above masquerade rules"
 
 sh "$SCRIPT" apply >/dev/null
 sysctl -w net.ipv4.conf.all.route_localnet=0 >/dev/null
@@ -75,4 +96,4 @@ sh "$SCRIPT" flush >/dev/null
 echo "ok   flush removes every rule and route"
 
 echo
-echo "PASS 12/12"
+echo "PASS 15/15"

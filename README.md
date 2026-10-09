@@ -70,7 +70,8 @@ which is a known container escape. Keep the image minimal and its base pinned.
 
 1. `docker compose ps` — `sslh-tproxy` healthy, `sslh` running.
 2. `sudo iptables -t mangle -S SSLH` and `-S OUTPUT`; repeat with `ip6tables`. One OUTPUT
-   jump per port, no duplicates.
+   jump per port, no duplicates. `sudo iptables -t nat -S POSTROUTING` — `-o lo -j SSLH` is
+   the first rule, above Docker's `MASQUERADE` rules.
 3. `ip rule show | grep fwmark` and `ip route show table 100`; repeat with `ip -6`.
    `sysctl net.ipv4.conf.all.route_localnet net.ipv4.conf.default.route_localnet` — both `= 1`.
 4. Redeploy three times, re-check 2 and 3. Counts must be identical.
@@ -81,6 +82,31 @@ which is a known container escape. Keep the image minimal and its base pinned.
    and `/var/log/auth.log`. A clean ruleset is not proof that transparency works.
 7. `sudo reboot`, then re-run 1 through 3 and 6.
 8. Only after all of the above: disable the old systemd unit, so the two cannot fight.
+
+## Clients in containers on this host
+
+A container reaching this host's public address on the sslh port is delivered locally, so
+sslh sees the container's own address and connects to the backend as that address. Two
+Docker protections get in the way, and both are needed for this to work:
+
+1. Docker masquerades traffic from a bridge network leaving through any other interface,
+   `lo` included. The script's `nat` `SSLH` chain exempts backend connections over `lo`,
+   and the reconcile loop keeps its jump first in `POSTROUTING`.
+2. Docker drops traffic to a container address arriving on any interface but that
+   network's bridge, and the backend's reply reaches sslh through `lo`. Each network
+   whose containers use this host's public names has to trust `lo`, in its own compose
+   file:
+
+   ```yaml
+   networks:
+     default:
+       driver_opts:
+         com.docker.network.bridge.trusted_host_interfaces: "lo"
+   ```
+
+   Driver options only apply when the network is created: destroy and redeploy the stack.
+
+Without 2, connections from that network's containers time out; nothing else is affected.
 
 ## Direct connections keep working
 

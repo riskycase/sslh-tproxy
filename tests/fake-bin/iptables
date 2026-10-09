@@ -39,6 +39,12 @@ case "$ACTION" in
     -A)
         echo "RULE $KEY $*" >> "$STATE"
         ;;
+    -I)
+        # Only position 1 is supported: the rule goes ahead of every other rule.
+        [ "${1:-}" = "1" ] && shift
+        { echo "RULE $KEY $*"; cat "$STATE"; } > "$STATE.tmp"
+        mv "$STATE.tmp" "$STATE"
+        ;;
     -C)
         grep -qxF "RULE $KEY $*" "$STATE"
         ;;
